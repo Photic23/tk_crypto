@@ -239,7 +239,8 @@ def load_key_from_file(filename):
         d = int(lines[1], 16)
         p = int(lines[2], 16)
         q = int(lines[3], 16)
-        return (n, d, p, q)
+        # For decryption, we only need n and d
+        return (n, d)
     else:
         raise ValueError("Invalid key file format")
 
@@ -266,20 +267,33 @@ def encrypt_file(input_file, output_file, key_file):
 
 def decrypt_file(input_file, output_file, key_file):
     """Decrypt a file using RSA-OAEP"""
-    private_key = load_key_from_file(key_file)
-    
-    with open(input_file, 'rb') as f_in, open(output_file, 'wb') as f_out:
-        while True:
-            # Read the length of the encrypted block
-            length_bytes = f_in.read(4)
-            if not length_bytes:
-                break
-            
-            block_length = struct.unpack('>I', length_bytes)[0]
-            encrypted_block = f_in.read(block_length)
-            
-            decrypted_block = oaep_decrypt(encrypted_block, private_key)
-            f_out.write(decrypted_block)
+    try:
+        private_key = load_key_from_file(key_file)
+        
+        with open(input_file, 'rb') as f_in, open(output_file, 'wb') as f_out:
+            while True:
+                # Read the length of the encrypted block
+                length_bytes = f_in.read(4)
+                if not length_bytes or len(length_bytes) < 4:
+                    break
+                
+                block_length = struct.unpack('>I', length_bytes)[0]
+                encrypted_block = f_in.read(block_length)
+                
+                if len(encrypted_block) != block_length:
+                    raise ValueError("Incomplete encrypted block read")
+                
+                decrypted_block = oaep_decrypt(encrypted_block, private_key)
+                f_out.write(decrypted_block)
+                
+    except Exception as e:
+        # Delete the output file if decryption fails
+        try:
+            import os
+            os.remove(output_file)
+        except:
+            pass
+        raise e
 
 # GUI Application
 class RSA_OAEP_App:
@@ -562,9 +576,17 @@ class RSA_OAEP_App:
         except Exception as e:
             # Stop progress bar
             self.decrypt_progress.stop()
-            self.status_var.set("Error decrypting file")
+            self.status_var.set(f"Error decrypting file: {str(e)}")
             
-            messagebox.showerror("Error", f"Failed to decrypt file: {str(e)}")
+            # Show detailed error message
+            import traceback
+            error_details = traceback.format_exc()
+            
+            messagebox.showerror("Error", f"Failed to decrypt file: {str(e)}\n\nDetails: {error_details}")
+            
+            # Log error to console
+            print("Decryption error details:")
+            print(error_details)
 
 # Main function
 def main():
