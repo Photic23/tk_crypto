@@ -253,7 +253,21 @@ def encrypt_file(input_file, output_file, key_file):
     # Calculate maximum message size in bytes
     block_size = (n.bit_length() // 8) - 2 * 32 - 2  # 32 is the SHA-256 digest size in bytes
     
+    # Get the original file extension
+    original_extension = os.path.splitext(input_file)[1].lower()
+    
     with open(input_file, 'rb') as f_in, open(output_file, 'wb') as f_out:
+        # First write the original extension (up to 10 bytes, padded with spaces)
+        # Format: [length of extension (1 byte)][extension (up to 10 bytes)]
+        ext_bytes = original_extension.encode('utf-8')
+        ext_length = min(len(ext_bytes), 10)
+        f_out.write(bytes([ext_length]))
+        f_out.write(ext_bytes[:ext_length])
+        # Pad if necessary
+        if ext_length < 10:
+            f_out.write(b' ' * (10 - ext_length))
+        
+        # Now encrypt and write the actual file data
         while True:
             block = f_in.read(block_size)
             if not block:
@@ -270,27 +284,42 @@ def decrypt_file(input_file, output_file, key_file):
     try:
         private_key = load_key_from_file(key_file)
         
-        with open(input_file, 'rb') as f_in, open(output_file, 'wb') as f_out:
-            while True:
-                # Read the length of the encrypted block
-                length_bytes = f_in.read(4)
-                if not length_bytes or len(length_bytes) < 4:
-                    break
-                
-                block_length = struct.unpack('>I', length_bytes)[0]
-                encrypted_block = f_in.read(block_length)
-                
-                if len(encrypted_block) != block_length:
-                    raise ValueError("Incomplete encrypted block read")
-                
-                decrypted_block = oaep_decrypt(encrypted_block, private_key)
-                f_out.write(decrypted_block)
+        with open(input_file, 'rb') as f_in:
+            # Read the extension information
+            ext_length = f_in.read(1)[0]
+            ext_bytes = f_in.read(10)
+            original_extension = ext_bytes[:ext_length].decode('utf-8')
+            
+            # Check if we need to apply the original extension to the output file
+            base_output = os.path.splitext(output_file)[0]
+            if original_extension and not output_file.lower().endswith(original_extension.lower()):
+                output_file = base_output + original_extension
+                print(f"Restoring original extension: {original_extension}")
+                print(f"Output file renamed to: {output_file}")
+            
+            with open(output_file, 'wb') as f_out:
+                while True:
+                    # Read the length of the encrypted block
+                    length_bytes = f_in.read(4)
+                    if not length_bytes or len(length_bytes) < 4:
+                        break
+                    
+                    block_length = struct.unpack('>I', length_bytes)[0]
+                    encrypted_block = f_in.read(block_length)
+                    
+                    if len(encrypted_block) != block_length:
+                        raise ValueError("Incomplete encrypted block read")
+                    
+                    decrypted_block = oaep_decrypt(encrypted_block, private_key)
+                    f_out.write(decrypted_block)
+        
+        return output_file  # Return the possibly modified output filename
                 
     except Exception as e:
         # Delete the output file if decryption fails
         try:
-            import os
-            os.remove(output_file)
+            if os.path.exists(output_file):
+                os.remove(output_file)
         except:
             pass
         raise e
@@ -564,8 +593,13 @@ class RSA_OAEP_App:
     
     def do_decrypt(self, input_file, key_file, output_file):
         try:
-            # Decrypt file
-            decrypt_file(input_file, output_file, key_file)
+            # Decrypt file (may return a modified output filename)
+            actual_output_file = decrypt_file(input_file, output_file, key_file)
+            
+            # Update the output filename in the GUI if it was changed
+            if actual_output_file != output_file:
+                self.decrypt_output_var.set(actual_output_file)
+                output_file = actual_output_file
             
             # Stop progress bar
             self.decrypt_progress.stop()
